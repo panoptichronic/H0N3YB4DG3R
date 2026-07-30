@@ -76,6 +76,7 @@ typedef struct {
 static int32_t attack_loop(void* context);
 static void update_status(UnsaflokApp* app, const char* fmt, ...);
 static void build_settings_view(UnsaflokApp* app);
+static void text_input_result_callback(void* context);
 
 // -------- Mutex-protected status --------
 static void update_status(UnsaflokApp* app, const char* fmt, ...) {
@@ -150,7 +151,6 @@ static void generate_candidates(UnsaflokApp* app, uint8_t candidates[][MAX_UID_L
         File* file = storage_file_alloc(storage);
         if(file && storage_file_open(file, app->config.dict_path, FSAM_READ, FSOM_OPEN_EXISTING)) {
             char line[64];
-            // Use storage_file_read() and parse line by line
             while(storage_file_read(file, line, sizeof(line) - 1) > 0 && *count < MAX_CANDIDATES) {
                 int parsed = 0;
                 char* token = strtok(line, " \n");
@@ -176,15 +176,14 @@ static void generate_candidates(UnsaflokApp* app, uint8_t candidates[][MAX_UID_L
     }
 }
 
-// -------- Emulation (uses standard SDK APIs where available) --------
+// -------- Emulation (placeholder for Official firmware) --------
 static void emulate_uid(UnsaflokApp* app, uint8_t* uid, size_t len) {
     (void)app;
     (void)uid;
     (void)len;
     // On Official firmware, RFID emulation is not directly available via HAL.
     // This is a placeholder that simply logs the attempt.
-    // For real emulation, use Unleashed/Momentum firmware or the RFID app.
-    // The app still serves as a UID generator and audit tool.
+    // For real emulation, use Unleashed/Momentum firmware.
 }
 
 // -------- Attack thread --------
@@ -256,13 +255,42 @@ static int32_t attack_loop(void* context) {
     return 0;
 }
 
+// -------- Text input result callback (used for both UID and dict) --------
+static void text_input_result_callback(void* context) {
+    UnsaflokApp* app = (UnsaflokApp*)context;
+
+    // If uid_input is set, parse it
+    if(strlen(app->uid_input) > 0) {
+        char* str = app->uid_input;
+        int bytes = 0;
+        char* token = strtok(str, " ");
+        while(token && bytes < MAX_UID_LEN) {
+            app->temp_config.known_uid[bytes++] = (uint8_t)strtoul(token, NULL, 16);
+            token = strtok(NULL, " ");
+        }
+        app->temp_config.known_uid_len = bytes;
+        char display[32] = "None";
+        if(bytes > 0) snprintf(display, sizeof(display), "%d bytes", bytes);
+        variable_item_set_current_value_text(app->known_uid_item, display);
+        app->uid_input[0] = '\0'; // clear so we don't re-trigger
+    }
+    // If dict_input is set, copy it
+    else if(strlen(app->dict_input) > 0) {
+        strncpy(app->temp_config.dict_path, app->dict_input, sizeof(app->temp_config.dict_path)-1);
+        variable_item_set_current_value_text(app->dict_path_item, app->temp_config.dict_path);
+        app->dict_input[0] = '\0';
+    }
+
+    view_dispatcher_switch_to_view(app->view_dispatcher, 2);
+}
+
 // -------- Settings UI --------
 static void var_list_enter_callback(void* context, uint32_t index) {
     UnsaflokApp* app = (UnsaflokApp*)context;
+
     if(index == 3) { // Known UID
         text_input_set_header_text(app->text_input, "Enter UID hex (e.g. 04 00 12 34 56)");
-        text_input_set_result_callback(app->text_input,
-            (TextInputCallback)text_input_result_callback, app);
+        text_input_set_result_callback(app->text_input, text_input_result_callback, app);
         if(app->temp_config.known_uid_len > 0) {
             char buf[3*MAX_UID_LEN + 1] = {0};
             size_t pos = 0;
@@ -277,38 +305,10 @@ static void var_list_enter_callback(void* context, uint32_t index) {
         view_dispatcher_switch_to_view(app->view_dispatcher, 3);
     } else if(index == 4) { // Dict path
         text_input_set_header_text(app->text_input, "Enter dict path (e.g. /ext/dict.txt)");
-        text_input_set_result_callback(app->text_input,
-            (TextInputCallback)text_input_result_callback, app);
+        text_input_set_result_callback(app->text_input, text_input_result_callback, app);
         strncpy(app->dict_input, app->temp_config.dict_path, sizeof(app->dict_input)-1);
         view_dispatcher_switch_to_view(app->view_dispatcher, 3);
     }
-}
-
-static void text_input_result_callback(void* context) {
-    UnsaflokApp* app = (UnsaflokApp*)context;
-    // Since we have two text inputs, we need to know which one we're editing
-    // We'll store the context in the text_input's user_data
-    // For simplicity, we'll just check if uid_input is set
-    if(strlen(app->uid_input) > 0) {
-        // Parse UID
-        char* str = app->uid_input;
-        int bytes = 0;
-        char* token = strtok(str, " ");
-        while(token && bytes < MAX_UID_LEN) {
-            app->temp_config.known_uid[bytes++] = (uint8_t)strtoul(token, NULL, 16);
-            token = strtok(NULL, " ");
-        }
-        app->temp_config.known_uid_len = bytes;
-        char display[32] = "None";
-        if(bytes > 0) snprintf(display, sizeof(display), "%d bytes", bytes);
-        variable_item_set_current_value_text(app->known_uid_item, display);
-        app->uid_input[0] = '\0';
-    } else if(strlen(app->dict_input) > 0) {
-        strncpy(app->temp_config.dict_path, app->dict_input, sizeof(app->temp_config.dict_path)-1);
-        variable_item_set_current_value_text(app->dict_path_item, app->temp_config.dict_path);
-        app->dict_input[0] = '\0';
-    }
-    view_dispatcher_switch_to_view(app->view_dispatcher, 2);
 }
 
 static void protocol_changed(VariableItem* item) {
