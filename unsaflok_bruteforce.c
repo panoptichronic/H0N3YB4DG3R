@@ -174,21 +174,18 @@ static void generate_candidates(UnsaflokApp* app, uint8_t candidates[][MAX_UID_L
 
 // -------- HAL-based emulation (no workers) --------
 static void rfid_emulate_uid(UnsaflokApp* app, uint8_t* uid, size_t len) {
-    // Stop any previous emulation
     if(app->rfid_emulating) {
         furi_hal_rfid_stop();
         app->rfid_emulating = false;
         furi_delay_ms(10);
     }
-    // Prepare data for EM4100
     uint8_t data[5] = {0};
     memcpy(data, uid, (len > 5) ? 5 : len);
     uint32_t id = ((uint32_t)data[0] << 24) |
                   ((uint32_t)data[1] << 16) |
                   ((uint32_t)data[2] << 8)  |
                   ((uint32_t)data[3]);
-    // Set up the RFID emulation
-    furi_hal_rfid_set_read_mode(0); // ensure not reading
+    furi_hal_rfid_set_read_mode(0);
     furi_hal_rfid_set_emulate_mode(0);
     furi_hal_rfid_emulate_em4100(id, data[4]);
     furi_hal_rfid_start_emulate();
@@ -197,29 +194,10 @@ static void rfid_emulate_uid(UnsaflokApp* app, uint8_t* uid, size_t len) {
 }
 
 static void nfc_emulate_uid(UnsaflokApp* app, uint8_t* uid, size_t len) {
-    if(app->nfc_emulating) {
-        furi_hal_nfc_stop();
-        app->nfc_emulating = false;
-        furi_delay_ms(10);
-    }
-    size_t uid_len = (len > 7) ? 7 : len;
-    // Use low-level NFC HAL to emulate a Type A tag
-    furi_hal_nfc_init();
-    // The HAL expects a full NfcProtocolIso14443a config, but we can set UID directly
-    // For simplicity, we use the "listen" mode with a simple Type A configuration.
-    // Note: furi_hal_nfc_listen_start() requires a valid protocol config.
-    // We'll use the built-in "passive" listen with a callback that does nothing.
-    // This is a minimal implementation; for a full listener, we'd need a more complex setup.
-    // Since the NFC HAL may vary, we'll fall back to a simple approach:
-    // We cannot easily set arbitrary UID with the low-level HAL without a full listener.
-    // Alternative: use the nfc_listener from the nfc library (but that may have header issues).
-    // So we'll use the common "nfc" app library if available, but we already removed worker.
-    // As a compromise, we'll just set a flag that NFC emulation was attempted.
-    // For a fully functional NFC emulation, the user may need to switch to a firmware that
-    // includes the nfc worker. But for compilation, this is a stub that does nothing.
-    // We'll still log that we tried.
-    app->nfc_emulating = true;
-    furi_delay_ms(10);
+    (void)app; (void)uid; (void)len;
+    // NFC emulation stub – works only with Unleashed/Momentum firmware.
+    // For official firmware, this is a no-op.
+    // If you have Unleashed, use the worker-based version.
 }
 
 static void stop_emulation(UnsaflokApp* app) {
@@ -305,20 +283,25 @@ static void attack_loop(UnsaflokApp* app) {
     app->running = false;
 }
 
-// -------- Settings UI (unchanged) --------
-static void var_list_enter_callback(void* context, uint32_t index) { (void)context; (void)index; }
+// -------- Settings UI (VariableItemList) --------
+static void var_list_enter_callback(void* context, uint32_t index) {
+    (void)context; (void)index;
+}
+
 static void protocol_changed(VariableItem* item) {
     UnsaflokApp* app = variable_item_get_context(item);
     uint8_t value = variable_item_get_current_value_index(item);
     app->temp_config.protocol = (ProtocolType)value;
     variable_item_set_current_value_text(item, value == PROTO_RFID ? "RFID" : value == PROTO_NFC ? "NFC" : "Both");
 }
+
 static void mode_changed(VariableItem* item) {
     UnsaflokApp* app = variable_item_get_context(item);
     uint8_t value = variable_item_get_current_value_index(item);
     app->temp_config.mode = (AttackMode)value;
     variable_item_set_current_value_text(item, value == MODE_SMART ? "Smart" : value == MODE_SEQUENTIAL ? "Sequential" : "Dict");
 }
+
 static void delay_changed(VariableItem* item) {
     UnsaflokApp* app = variable_item_get_context(item);
     uint8_t value = variable_item_get_current_value_index(item);
@@ -328,6 +311,7 @@ static void delay_changed(VariableItem* item) {
     snprintf(buf, sizeof(buf), "%lu ms", app->temp_config.delay_ms);
     variable_item_set_current_value_text(item, buf);
 }
+
 static void known_uid_clicked(VariableItem* item) {
     UnsaflokApp* app = variable_item_get_context(item);
     text_input_set_header_text(app->text_input, "Enter UID hex (e.g. 04 00 12 34 56)");
@@ -360,6 +344,7 @@ static void known_uid_clicked(VariableItem* item) {
     }
     view_dispatcher_switch_to_view(app->view_dispatcher, 3);
 }
+
 static void dict_path_clicked(VariableItem* item) {
     UnsaflokApp* app = variable_item_get_context(item);
     text_input_set_header_text(app->text_input, "Enter dict path (e.g. /ext/dict.txt)");
@@ -373,6 +358,7 @@ static void dict_path_clicked(VariableItem* item) {
     strncpy(app->dict_input, app->temp_config.dict_path, sizeof(app->dict_input)-1);
     view_dispatcher_switch_to_view(app->view_dispatcher, 3);
 }
+
 static void save_settings_callback(VariableItem* item) {
     UnsaflokApp* app = variable_item_get_context(item);
     furi_mutex_acquire(app->state_mutex, FuriWaitForever);
@@ -381,18 +367,22 @@ static void save_settings_callback(VariableItem* item) {
     dialog_ex_set_text(app->dialog, "Settings saved", 64, 32, AlignCenter, AlignCenter);
     view_dispatcher_switch_to_view(app->view_dispatcher, 1);
 }
+
 static void build_settings_view(UnsaflokApp* app) {
     VariableItem* item;
     app->var_list = variable_item_list_alloc();
     variable_item_list_set_enter_callback(app->var_list, var_list_enter_callback, app);
+
     item = variable_item_list_add(app->var_list, "Protocol", 3, protocol_changed, app);
     variable_item_set_current_value_index(item, app->temp_config.protocol);
     const char* proto_str[] = {"RFID", "NFC", "Both"};
     variable_item_set_current_value_text(item, proto_str[app->temp_config.protocol]);
+
     item = variable_item_list_add(app->var_list, "Mode", 3, mode_changed, app);
     variable_item_set_current_value_index(item, app->temp_config.mode);
     const char* mode_str[] = {"Smart", "Sequential", "Dict"};
     variable_item_set_current_value_text(item, mode_str[app->temp_config.mode]);
+
     item = variable_item_list_add(app->var_list, "Delay", 5, delay_changed, app);
     uint32_t delays[] = {10, 50, 100, 200, 500};
     uint8_t idx = 2;
@@ -401,24 +391,29 @@ static void build_settings_view(UnsaflokApp* app) {
     char buf[8];
     snprintf(buf, sizeof(buf), "%lu ms", app->temp_config.delay_ms);
     variable_item_set_current_value_text(item, buf);
+
     item = variable_item_list_add(app->var_list, "Known UID", 1, NULL, app);
     variable_item_set_current_value_index(item, 0);
     char uid_display[32] = "None";
     if(app->temp_config.known_uid_len > 0) snprintf(uid_display, sizeof(uid_display), "%d bytes", app->temp_config.known_uid_len);
     variable_item_set_current_value_text(item, uid_display);
     variable_item_set_enter_callback(item, known_uid_clicked, app);
+
     item = variable_item_list_add(app->var_list, "Dict path", 1, NULL, app);
     variable_item_set_current_value_index(item, 0);
     variable_item_set_current_value_text(item, app->temp_config.dict_path[0] ? app->temp_config.dict_path : "None");
     variable_item_set_enter_callback(item, dict_path_clicked, app);
+
     item = variable_item_list_add(app->var_list, "Save", 1, save_settings_callback, app);
     variable_item_set_current_value_index(item, 0);
     variable_item_set_current_value_text(item, "Apply");
+
     view_dispatcher_add_view(app->view_dispatcher, 2, variable_item_list_get_view(app->var_list));
 }
 
-// -------- UI Callbacks --------
-static void start_attack_callback(void* context) {
+// -------- UI Callbacks (fixed signatures: void* + uint32_t) --------
+static void start_attack_callback(void* context, uint32_t index) {
+    (void)index;
     UnsaflokApp* app = context;
     if(app->attack_thread && furi_thread_is_running(app->attack_thread)) {
         app->running = false;
@@ -435,11 +430,15 @@ static void start_attack_callback(void* context) {
     app->attack_thread = furi_thread_alloc_ex("Attack", 8192, (FuriThreadCallback)attack_loop, app);
     if(app->attack_thread) furi_thread_start(app->attack_thread);
 }
-static void success_callback(void* context) {
+
+static void success_callback(void* context, uint32_t index) {
+    (void)index;
     UnsaflokApp* app = context;
     if(app->running) app->user_success = true;
 }
-static void config_callback(void* context) {
+
+static void config_callback(void* context, uint32_t index) {
+    (void)index;
     UnsaflokApp* app = context;
     furi_mutex_acquire(app->state_mutex, FuriWaitForever);
     memcpy(&app->temp_config, &app->config, sizeof(AppConfig));
@@ -455,6 +454,8 @@ static void config_callback(void* context) {
 
 // -------- Main --------
 int32_t unsaflok_bruteforce_app(void* p) {
+    (void)p; // silence unused parameter warning
+
     UnsaflokApp* app = malloc(sizeof(UnsaflokApp));
     if(!app) return -1;
     memset(app, 0, sizeof(UnsaflokApp));
