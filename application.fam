@@ -6,5 +6,4 @@ App(
     requires=["gui", "rfid", "nfc", "storage", "dialogs"],
     stack_size=8192,
     fap_category="Tools",
-    fap_icon="icon.png",   # optional
 )
