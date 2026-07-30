@@ -1,6 +1,6 @@
 App(
     appid="unsaflok_bruteforce",
-    name="H0N3YB4DG3R",
+    name="Unsaflok Brute",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="unsaflok_bruteforce_app",
     requires=["gui", "rfid", "nfc", "storage", "dialogs"],
